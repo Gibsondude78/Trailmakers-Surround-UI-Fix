@@ -8,7 +8,7 @@
 - Preserve the user's manual F10 choice throughout automatic map transitions.
 - Match the map's click-conversion dimensions to its expanded rectangle, fixing beacon placement across the full display. Restore the original input dimensions when the map closes or the add-on is disabled.
 
-The in-game map switch and beacon placement across all three screens were confirmed working at 5760 × 1080 in a live session. Menu-map coverage and a fresh launch of the packaged v0.2.0 add-on remain unverified. Install/uninstall fixture tests pass.
+The in-game map switch and beacon placement across all three screens were confirmed working at 5760 × 1080 in a live session. The user subsequently confirmed the v0.2.0 release working on 2026-10-27. The separate menu-map path remains unverified. Install/uninstall fixture tests pass.
 
 ## 0.1.0 — 2026-10-27 (experimental)
 
