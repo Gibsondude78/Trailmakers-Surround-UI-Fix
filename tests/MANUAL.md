@@ -24,3 +24,5 @@ Test setup: 5760 × 1080 NVIDIA Surround, Trailmakers 253.518.205.0, ReShade 6.8
 ## Installer tests
 
 `build.ps1` tests installation, repeated installation, removal, and preservation of existing files in temporary game folders. It also checks missing ReShade loaders, conflicting or modified add-ons and invalid install records. These tests don't run the game.
+
+The v0.2.1 installer was also checked at normal and simulated 150% Windows scaling. Its installed, ready, running-game and missing-ReShade states were checked separately. The EXE contains nine icon sizes from 16 to 256 pixels.

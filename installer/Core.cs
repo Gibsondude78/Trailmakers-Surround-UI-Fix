@@ -132,7 +132,7 @@ namespace TrailmakersSurroundUI
             string root = GameFolder(input);
             Closed(root);
             if (Loader(root) == null)
-                throw new InvalidOperationException("ReShade was not detected. Install ReShade 6.8 or newer with FULL ADD-ON SUPPORT for Trailmakers (DirectX 10/11/12), then run this installer again. Use the Official ReShade download link below.");
+                throw new InvalidOperationException("ReShade wasn't found. Install ReShade 6.8 or newer with full add-on support for Trailmakers (DirectX 10/11/12), then try again.");
             string target = Path.Combine(root, AddonName);
             PlainFile(target);
             InstallRecord existing = Record(root);
@@ -144,7 +144,7 @@ namespace TrailmakersSurroundUI
                 if (!String.Equals(hash, PayloadInfo.Sha256, StringComparison.OrdinalIgnoreCase))
                     throw new InvalidOperationException(existing == null
                         ? "A different surround-ui.addon64 already exists. It was left untouched."
-                        : "An older version is installed. Click Uninstall, then Install to update. Your settings will be kept.");
+                        : "An older version is installed. Remove it, then install this version. Your settings will be kept.");
             }
             string stage = Path.Combine(root, ".surround-ui-" + Guid.NewGuid().ToString("N") + ".tmp");
             bool added = false;

@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.2.1 — 27 October 2026
+
+- New yellow and charcoal installer, with an original Windows icon.
+- Clearer install, reinstall and remove controls.
+- Added status messages for a running game, missing ReShade and an existing installation.
+
+Uses the same game add-on as v0.2.0.
+
 ## 0.2.0 — 27 October 2026
 
 - The map now fills all three screens automatically. Closing it restores the centred UI.

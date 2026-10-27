@@ -24,6 +24,8 @@ The add-on writes its toggle to `surround-ui.ini` and diagnostic messages to `su
 
 ## Building and testing
 
-Run `build.ps1` from PowerShell. Use `-Version 0.2.0` to select a version and `-SkipTests` to skip installer tests. Test results are left in a `TrailmakersUiInstallerTests-*` folder under the Windows temporary directory.
+Run `build.ps1` from PowerShell. Use `-Version 0.2.1` to select a version and `-SkipTests` to skip installer tests. Test results are left in a `TrailmakersUiInstallerTests-*` folder under the Windows temporary directory.
+
+The installer artwork is drawn in `installer/Branding.cs`. `scripts/MakeIcon.cs` builds the Windows icon and PNG from that drawing, with sizes from 16 to 256 pixels. Both are rebuilt by `build.ps1`; no image tools or extra packages are needed. The artwork is original to this project and uses the same MIT licence as the code.
 
 The dummy exports in `tests/reshade_stub.cpp` are a PE detection fixture, not a ReShade loader. Don't distribute that DLL with the add-on.

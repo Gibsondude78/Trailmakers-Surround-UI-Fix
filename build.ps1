@@ -1,4 +1,4 @@
-param([string]$Version = '0.2.0', [switch]$SkipTests)
+param([string]$Version = '0.2.1', [switch]$SkipTests)
 $ErrorActionPreference = 'Stop'
 if ($Version -notmatch '^\d+\.\d+\.\d+$') { throw 'Version must be major.minor.patch.' }
 $root = $PSScriptRoot
@@ -15,6 +15,14 @@ $sdk = Get-ChildItem -LiteralPath (Join-Path $sdkRoot 'Include') -Directory | Wh
 if (!$sdk) { throw 'The Windows 10/11 SDK is missing.' }
 $cl = Join-Path $vc.FullName 'bin\Hostx64\x64\cl.exe'
 $csc = Join-Path $env:WINDIR 'Microsoft.NET\Framework64\v4.0.30319\csc.exe'
+$assets = Join-Path $root 'assets'
+$iconBuilder = Join-Path $out 'MakeIcon.exe'
+& $csc /nologo /warn:4 /warnaserror+ /optimize+ /target:exe "/out:$iconBuilder" /reference:System.Drawing.dll (Join-Path $root 'installer\Branding.cs') (Join-Path $root 'scripts\MakeIcon.cs')
+if ($LASTEXITCODE) { throw 'Icon builder compilation failed.' }
+& $iconBuilder $assets
+if ($LASTEXITCODE) { throw 'Icon generation failed.' }
+$manifest = Join-Path $out 'setup.manifest'
+(Get-Content -LiteralPath (Join-Path $root 'installer\app.manifest') -Raw).Replace('version="0.2.1.0"', ('version="' + $Version + '.0"')) | Set-Content -LiteralPath $manifest -Encoding UTF8
 $savedInclude = $env:INCLUDE
 $savedLib = $env:LIB
 try {
@@ -28,7 +36,9 @@ try {
     @"
 using System.Reflection;
 [assembly: AssemblyTitle("Trailmakers Centre Screen UI Setup")]
-[assembly: AssemblyDescription("Community Surround UI fix installer")]
+[assembly: AssemblyDescription("Trailmakers Surround UI Fix installer")]
+[assembly: AssemblyProduct("Trailmakers Surround UI Fix")]
+[assembly: AssemblyCompany("Gibsondude78")]
 [assembly: AssemblyVersion("$Version.0")]
 [assembly: AssemblyFileVersion("$Version.0")]
 namespace TrailmakersSurroundUI { internal static class PayloadInfo {
@@ -36,10 +46,10 @@ namespace TrailmakersSurroundUI { internal static class PayloadInfo {
     public const string Sha256 = "$hash";
 } }
 "@ | Set-Content -LiteralPath $payloadInfo -Encoding UTF8
-    $sources = @((Join-Path $root 'installer\Core.cs'), (Join-Path $root 'installer\Program.cs'), (Join-Path $root 'tests\InstallerTests.cs'), $payloadInfo)
+    $sources = @((Join-Path $root 'installer\Core.cs'), (Join-Path $root 'installer\Branding.cs'), (Join-Path $root 'installer\Program.cs'), (Join-Path $root 'tests\InstallerTests.cs'), $payloadInfo)
     $references = @('/reference:System.Windows.Forms.dll', '/reference:System.Drawing.dll', '/reference:System.Runtime.Serialization.dll')
     $setup = Join-Path $dist "TrailmakersSurroundUI-Setup-$Version.exe"
-    & $csc /nologo /warn:4 /warnaserror+ /optimize+ /platform:x64 /target:winexe "/out:$setup" "/resource:$addon,surround-ui.addon64" "/win32manifest:$root\installer\app.manifest" @references @sources
+    & $csc /nologo /warn:4 /warnaserror+ /optimize+ /platform:x64 /target:winexe "/out:$setup" "/resource:$addon,surround-ui.addon64" "/resource:$assets\setup.ico,setup.ico" "/win32icon:$assets\setup.ico" "/win32manifest:$manifest" @references @sources
     if ($LASTEXITCODE) { throw 'Installer compilation failed.' }
     if (!$SkipTests) {
         $stub = Join-Path $out 'reshade_stub.dll'
