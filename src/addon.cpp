@@ -9,6 +9,7 @@
 #include <map>
 #include <set>
 #include <string>
+#include <vector>
 
 // ReShade's exported registration API. No graphics callbacks or game-code
 // detours are needed: the window's timer runs on Unity's main thread.
@@ -19,17 +20,24 @@ extern "C" __declspec(dllexport) const char *DESCRIPTION =
 using Method = const void *;
 using Object = void *;
 struct Vec2 { float x, y; };
+struct Rect { float x, y, width, height; };
 struct SavedRect { void *handle; Vec2 minimum, maximum; bool seen; };
+struct MapProbe { void *handle; Method visible; void *mapUiField; };
+struct SavedMapInput { void *handle; Vec2 resolution; bool seen; };
 
 static HMODULE addonModule;
 static HWND gameWindow;
 static WNDPROC originalWindowProc;
 static UINT controlMessage;
 static UINT_PTR timerId;
-static bool enabled = true, ready;
+static bool enabled = true, ready, mapWasOpen;
 static std::atomic_bool stopped{false};
 static wchar_t configPath[MAX_PATH], logPath[MAX_PATH];
 static std::map<Object, SavedRect> saved;
+static std::vector<MapProbe> mapProbes;
+static std::map<Object, SavedMapInput> mapInputs;
+static DWORD lastMapScan, lastLayoutScan;
+static bool mapCacheReady, layoutScanned;
 
 static void Log(const char *message) {
     FILE *file = nullptr;
@@ -51,6 +59,7 @@ struct Il2Cpp {
     void *(*class_get_field_from_name)(void *, const char *);
     void *(*object_get_class)(Object);
     void (*field_get_value)(Object, void *, void *);
+    void (*field_set_value)(Object, void *, void *);
     const void *(*class_get_type)(void *);
     Object (*type_get_object)(const void *);
     Object (*runtime_invoke)(Method, Object, void **, Object *);
@@ -63,11 +72,12 @@ struct Il2Cpp {
     const wchar_t *(*string_chars)(Object);
     Object (*string_new)(const char *);
 
-    Object scalerType;
+    Object scalerType, mapComponentType, mapViewType;
     void *scalingTransformsField;
     void *listItemsField, *listSizeField;
+    void *mapComponentUiField, *mapViewUiField, *mapResolutionField, *mapRectField;
     Method findObjects, getParent, getName, getMin, getMax, setMin, setMax;
-    Method getWidth, getHeight, isAlive;
+    Method getWidth, getHeight, isAlive, mapIsVisible, isActiveAndEnabled, getRect;
 } api{};
 
 static Object Invoke(Method method, Object target, void **arguments = nullptr) {
@@ -100,7 +110,7 @@ static bool ResolveApi() {
     LOAD_API(assembly_get_image); LOAD_API(class_from_name);
     LOAD_API(class_get_method_from_name); LOAD_API(class_get_field_from_name);
     LOAD_API(object_get_class);
-    LOAD_API(field_get_value); LOAD_API(class_get_type); LOAD_API(type_get_object);
+    LOAD_API(field_get_value); LOAD_API(field_set_value); LOAD_API(class_get_type); LOAD_API(type_get_object);
     LOAD_API(runtime_invoke); LOAD_API(object_unbox); LOAD_API(array_length);
     LOAD_API(gchandle_new); LOAD_API(gchandle_get_target); LOAD_API(gchandle_free);
     LOAD_API(string_length); LOAD_API(string_chars);
@@ -124,8 +134,29 @@ static bool ResolveApi() {
     api.getMax = FindMethod(rect, "get_anchorMax", 0);
     api.setMin = FindMethod(rect, "set_anchorMin", 1);
     api.setMax = FindMethod(rect, "set_anchorMax", 1);
+    api.getRect = FindMethod(rect, "get_rect", 0);
     api.getWidth = FindMethod(screen, "get_width", 0);
     api.getHeight = FindMethod(screen, "get_height", 0);
+    void *mapComponent = FindClass("", "MapUIComponent");
+    void *mapView = FindClass("", "MapView");
+    void *mapUi = FindClass("", "MapUI");
+    void *behaviour = FindClass("UnityEngine", "Behaviour");
+    api.isActiveAndEnabled = behaviour ? api.class_get_method_from_name(behaviour, "get_isActiveAndEnabled", 0) : nullptr;
+    api.mapIsVisible = mapComponent ? api.class_get_method_from_name(mapComponent, "IsVisible", 0) : nullptr;
+    api.mapComponentUiField = mapComponent ? api.class_get_field_from_name(mapComponent, "m_mapUI") : nullptr;
+    api.mapViewUiField = mapView ? api.class_get_field_from_name(mapView, "m_mapUI") : nullptr;
+    api.mapResolutionField = mapUi ? api.class_get_field_from_name(mapUi, "m_targetResolution") : nullptr;
+    api.mapRectField = mapUi ? api.class_get_field_from_name(mapUi, "rectTransform") : nullptr;
+    if (api.isActiveAndEnabled) {
+        if (mapComponent && api.mapIsVisible)
+            api.mapComponentType = api.type_get_object(api.class_get_type(mapComponent));
+        if (mapView) api.mapViewType = api.type_get_object(api.class_get_type(mapView));
+    }
+    Log(api.mapComponentType && api.mapViewType
+        ? "Map visibility detection ready for the in-game and menu maps."
+        : "Some map visibility metadata is unavailable; automatic full-width maps may be incomplete.");
+    if (!api.mapResolutionField || !api.mapRectField || !api.mapComponentUiField || !api.mapViewUiField)
+        Log("Some map coordinate metadata is unavailable; beacon alignment may be incomplete.");
     Log("Unity UI methods resolved by name on its window/main thread.");
     return true;
 }
@@ -178,10 +209,139 @@ static void Restore() {
     saved.clear();
 }
 
+static void CollectMaps(Object type, Method visible, void *mapUiField, std::vector<MapProbe> &probes) {
+    if (!type) return;
+    bool includeInactive = true;
+    void *arguments[] = { type, &includeInactive };
+    Object array = Invoke(api.findObjects, nullptr, arguments);
+    if (!array) return;
+    void *handle = api.gchandle_new(array, false);
+    try {
+        const size_t count = api.array_length(array);
+        if (count > 4096) throw "Unexpected map component count; layout adjustment stopped.";
+        for (size_t i = 0; i < count; ++i) {
+            array = api.gchandle_get_target(handle);
+            if (!array) throw "Unity released the temporary map list unexpectedly.";
+            Object component = reinterpret_cast<Object *>(array)[4 + i];
+            if (!Alive(component)) continue;
+            probes.push_back(MapProbe{nullptr, visible, mapUiField});
+            probes.back().handle = api.gchandle_new(component, false);
+        }
+    } catch (...) { api.gchandle_free(handle); throw; }
+    api.gchandle_free(handle);
+}
+
+static void ClearMapCache() {
+    for (auto &probe : mapProbes) if (probe.handle) api.gchandle_free(probe.handle);
+    mapProbes.clear();
+    mapCacheReady = false;
+}
+
+static bool MapVisible(const MapProbe &probe) {
+    Object component = api.gchandle_get_target(probe.handle);
+    if (!Alive(component) ||
+        !*static_cast<bool *>(api.object_unbox(Invoke(api.isActiveAndEnabled, component)))) return false;
+    return !probe.visible || *static_cast<bool *>(api.object_unbox(Invoke(probe.visible, component)));
+}
+
+static bool MapOpen(DWORD now) {
+    // Discover inactive map objects infrequently, then read only their cached
+    // visibility on each window tick. Do not scan all Unity objects per frame.
+    if (!mapCacheReady || now - lastMapScan >= 500) {
+        std::vector<MapProbe> fresh;
+        try {
+            CollectMaps(api.mapComponentType, api.mapIsVisible, api.mapComponentUiField, fresh);
+            CollectMaps(api.mapViewType, nullptr, api.mapViewUiField, fresh);
+        } catch (...) {
+            for (auto &probe : fresh) if (probe.handle) api.gchandle_free(probe.handle);
+            throw;
+        }
+        ClearMapCache();
+        mapProbes.swap(fresh);
+        mapCacheReady = true;
+        lastMapScan = now;
+    }
+    for (auto &probe : mapProbes) {
+        // The quick map uses canvas visibility, while the menu MapView
+        // uses its component lifecycle. Neither depends on a key binding.
+        if (MapVisible(probe)) return true;
+    }
+    return false;
+}
+
+static void RestoreMapInputs(bool all = true) {
+    for (auto item = mapInputs.begin(); item != mapInputs.end();) {
+        if (all || !item->second.seen) {
+            Object ui = api.gchandle_get_target(item->second.handle);
+            if (Alive(ui)) api.field_set_value(ui, api.mapResolutionField, &item->second.resolution);
+            api.gchandle_free(item->second.handle);
+            item = mapInputs.erase(item);
+        } else ++item;
+    }
+}
+
+static void SyncMapInputs() {
+    if (!api.mapResolutionField || !api.mapRectField) return;
+    for (auto &entry : mapInputs) entry.second.seen = false;
+    for (auto &probe : mapProbes) {
+        if (!probe.mapUiField || !MapVisible(probe)) continue;
+        Object ui = nullptr, rect = nullptr;
+        api.field_get_value(api.gchandle_get_target(probe.handle), probe.mapUiField, &ui);
+        if (!Alive(ui)) continue;
+        api.field_get_value(ui, api.mapRectField, &rect);
+        if (!Alive(rect)) continue;
+        const Rect bounds = *static_cast<Rect *>(api.object_unbox(Invoke(api.getRect, rect)));
+        if (!std::isfinite(bounds.width) || !std::isfinite(bounds.height) ||
+            bounds.width <= 0 || bounds.height <= 0) continue;
+        Vec2 current{};
+        api.field_get_value(ui, api.mapResolutionField, &current);
+        auto item = mapInputs.find(ui);
+        if (item == mapInputs.end()) {
+            mapInputs.emplace(ui, SavedMapInput{api.gchandle_new(ui, false), current, true});
+            char line[160];
+            sprintf_s(line, "Map input frame synchronized from %.1fx%.1f to %.1fx%.1f UI units.",
+                current.x, current.y, bounds.width, bounds.height);
+            Log(line);
+        } else item->second.seen = true;
+        // MapUI's screen-to-map conversion uses this stored size. Restoring
+        // full-width anchors alone leaves clicks compressed into the middle
+        // third. Use local UI units, which also respect the canvas scale.
+        if (std::fabs(current.x - bounds.width) > 0.001f ||
+            std::fabs(current.y - bounds.height) > 0.001f) {
+            Vec2 target{bounds.width, bounds.height};
+            api.field_set_value(ui, api.mapResolutionField, &target);
+        }
+    }
+    RestoreMapInputs(false);
+}
+
 static void Adjust() {
     int width = *static_cast<int *>(api.object_unbox(Invoke(api.getWidth, nullptr)));
     int height = *static_cast<int *>(api.object_unbox(Invoke(api.getHeight, nullptr)));
-    if (!enabled || height <= 0 || width <= height * 2.4f) { Restore(); return; }
+    const DWORD now = GetTickCount();
+    const bool mapOpen = MapOpen(now);
+    const bool mapChanged = mapOpen != mapWasOpen;
+    if (mapChanged) {
+        Log(mapOpen ? "Map opened; restoring the full-width UI."
+            : "Map closed; resuming the saved UI toggle setting.");
+        mapWasOpen = mapOpen;
+    }
+    // Automatic map bypass never writes or overrides the user's F10 choice.
+    if (mapOpen) {
+        Restore();
+        SyncMapInputs();
+        layoutScanned = false;
+        return;
+    }
+    RestoreMapInputs();
+    if (!enabled || height <= 0 || width <= height * 2.4f) {
+        Restore(); layoutScanned = false; return;
+    }
+    // Map transitions and F10 apply immediately; ordinary discovery of new
+    // HUD/menu roots retains the original half-second interval.
+    if (!mapChanged && layoutScanned && now - lastLayoutScan < 500) return;
+    lastLayoutScan = now;
+    layoutScanned = true;
     const float margin = std::max(0.0f, (1.0f - height * (16.0f / 9.0f) / width) * 0.5f);
     const Vec2 minimum{margin, 0}, maximum{1.0f - margin, 1};
     bool includeInactive = true;
@@ -267,7 +427,7 @@ static void CALLBACK Tick(HWND, UINT, UINT_PTR, DWORD) {
         if (ready) Adjust();
     } catch (const char *message) {
         Log(message); enabled = false;
-        try { if (ready) Restore(); } catch (...) {}
+        try { if (ready) { Restore(); RestoreMapInputs(); ClearMapCache(); } } catch (...) {}
         stopped = true;
     } catch (...) { Log("Unexpected exception; UI adjustment stopped."); stopped = true; }
 }
@@ -275,12 +435,12 @@ static void CALLBACK Tick(HWND, UINT, UINT_PTR, DWORD) {
 static LRESULT CALLBACK WindowProc(HWND window, UINT message, WPARAM w, LPARAM l) {
     if (message == controlMessage) {
         if (w == 1) {
-            if (!timerId) timerId = SetTimer(window, 0, 500, Tick);
+            if (!timerId) timerId = SetTimer(window, 0, 16, Tick);
             Log(timerId ? "Main-thread UI timer started. F10 toggles the layout." : "Could not create UI timer.");
         } else {
             if (timerId) { KillTimer(window, timerId); timerId = 0; }
             stopped = true;
-            try { if (ready) Restore(); } catch (...) {}
+            try { if (ready) { Restore(); RestoreMapInputs(); ClearMapCache(); } } catch (...) {}
             if (reinterpret_cast<WNDPROC>(GetWindowLongPtrW(window, GWLP_WNDPROC)) == WindowProc)
                 SetWindowLongPtrW(window, GWLP_WNDPROC, reinterpret_cast<LONG_PTR>(originalWindowProc));
         }
@@ -333,6 +493,8 @@ extern "C" __declspec(dllexport) bool AddonInit(HMODULE module, HMODULE reshadeM
     addonModule = module;
     stopped = false;
     ready = false;
+    mapWasOpen = false;
+    mapCacheReady = layoutScanned = false;
     wchar_t executable[MAX_PATH]{}; GetModuleFileNameW(nullptr, executable, MAX_PATH);
     const wchar_t *base = wcsrchr(executable, L'\\');
     if (_wcsicmp(base ? base + 1 : executable, L"Trailmakers.exe") != 0) return false;

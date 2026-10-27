@@ -1,4 +1,4 @@
-param([string]$Version = '0.1.0', [switch]$SkipTests)
+param([string]$Version = '0.2.0', [switch]$SkipTests)
 $ErrorActionPreference = 'Stop'
 if ($Version -notmatch '^\d+\.\d+\.\d+$') { throw 'Version must be major.minor.patch.' }
 $root = $PSScriptRoot
