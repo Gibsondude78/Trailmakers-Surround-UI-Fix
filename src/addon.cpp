@@ -184,8 +184,7 @@ static std::wstring Name(Object object) {
 static bool CentreRoot(Object rect, const std::wstring &owner) {
     Object parent = Invoke(api.getParent, rect);
     const std::wstring parentName = parent ? Name(parent) : L"";
-    // These are full-screen visual surfaces or widgets projected from the 3D
-    // world, rather than the fixed HUD and menus requested by the user.
+    // Keep full-screen effects and world-space widgets at their original size.
     if (owner == L"BuilderUICanvas" || owner == L"WorldIconHandlerUI" ||
         owner == L"Virtual Pointer" || owner == L"PFB_TrailmakersVideoPlayer") return false;
     if (parentName == L"BG canvas" || parentName == L"CanvasBackground" ||

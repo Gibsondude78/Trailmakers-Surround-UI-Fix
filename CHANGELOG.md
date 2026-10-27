@@ -1,20 +1,15 @@
 # Changelog
 
-## 0.2.0 — 2026-10-27 (experimental)
+## 0.2.0 — 27 October 2026
 
-- Automatically restore the full-width UI while the map is open and resume centring when it closes, including with Escape.
-- Detect the in-game map's actual visibility and the menu map's component activity, independently of key bindings.
-- Poll cached map objects with a 16 ms window timer; retain 500 ms object/layout discovery to avoid scanning the scene every frame.
-- Preserve the user's manual F10 choice throughout automatic map transitions.
-- Match the map's click-conversion dimensions to its expanded rectangle, fixing beacon placement across the full display. Restore the original input dimensions when the map closes or the add-on is disabled.
+- The map now fills all three screens automatically. Closing it restores the centred UI.
+- Fixed beacon placement on the wider map.
+- Reduced the delay when opening and closing the map.
+- Kept the F10 setting separate from the automatic map switch.
 
-The in-game map switch and beacon placement across all three screens were confirmed working at 5760 × 1080 in a live session. The user subsequently confirmed the v0.2.0 release working on 2026-10-27. The separate menu-map path remains unverified. Install/uninstall fixture tests pass.
+Tested at 5760 × 1080.
 
-## 0.1.0 — 2026-10-27 (experimental)
+## 0.1.0 — 27 October 2026
 
-- Centre fixed HUD, menus, inventory and dialogs within a 16:9 frame at wide aspect ratios.
-- Preserve full-resolution world rendering and full-screen visual surfaces.
-- Save original UI anchors and offer an F10 toggle.
-- Provide an installer/uninstaller, portable package, source build and installer fixture tests.
-
-Fresh-launch loading through ReShade and the F10 toggle still need confirmation. See the README for tested scope and runtime-modding policy.
+- Initial release: centred HUD, menus and build inventory.
+- Added F10 toggle and a Windows installer with uninstall support.

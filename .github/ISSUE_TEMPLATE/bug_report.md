@@ -1,25 +1,19 @@
 ---
 name: Bug report
-about: Report a layout, loading or setup problem
+about: Something isn't working
 title: ''
 labels: bug
 assignees: ''
 ---
 
-**Versions**
-- Trailmakers:
-- ReShade version, and whether full add-on support is installed:
+What went wrong, and how can it be reproduced?
+
 - Fix version:
-- Windows version:
+- Trailmakers version:
+- ReShade version (full add-on support build?):
+- Resolution and monitor layout:
+- Fullscreen, borderless or windowed:
 
-**Display**
-- Game resolution:
-- Monitor layout:
-- Window mode:
+Screenshots or relevant lines from `surround-ui.log`:
 
-**Problem and reproduction steps**
-
-**Expected behaviour**
-
-**Relevant log lines / screenshots**
-Review for personal information before posting. Do not attach game binaries or save files.
+Check attachments for personal information. Please don't upload game DLLs or saves.
